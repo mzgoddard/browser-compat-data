@@ -26,6 +26,7 @@ import {
 } from '../types/types.js';
 import { parseUA } from '../utils/ua-parser.js';
 
+type Minimatch = _minimatch.Minimatch;
 const { Minimatch } = _minimatch;
 
 type Exposure = 'Window' | 'Worker' | 'SharedWorker' | 'ServiceWorker';
@@ -340,10 +341,19 @@ export const inferSupportStatements = (
   return statements;
 };
 
+interface UpdateFilter {
+  reports: string[];
+  path: string | Minimatch | null;
+  browser: BrowserName[];
+  release: string | false | null;
+  exactOnly: boolean;
+  addNewFeatures: boolean;
+}
+
 export const update = (
   bcd: Identifier,
   supportMatrix: SupportMatrix,
-  filter: any,
+  filter: UpdateFilter,
 ): boolean => {
   let modified = false;
 
@@ -657,23 +667,52 @@ export const loadJsonFiles = async (
   return Object.fromEntries(entries);
 };
 
+interface MainFilter {
+  reports: string[];
+  path: string | null;
+  browser: BrowserName[];
+  release: string | null;
+  exactOnly: boolean;
+  addNewFeatures?: boolean;
+}
+
+/**
+ * Process options.
+ * @param {MainFilter} filter options from yargs or a dependent
+ * @returns {UpdateFilter} processed options
+ */
+const processFilter = ({
+  reports,
+  path: _path,
+  browser,
+  release: _release,
+  exactOnly,
+  addNewFeatures: _addNewFeatures,
+}: MainFilter): UpdateFilter => {
+  // Replace path with a minimatch object.
+  const path = _path && _path.includes('*') ? new Minimatch(_path) : _path;
+  const release = _release === 'false' ? false : _release;
+  const addNewFeatures = _addNewFeatures ?? false;
+  return {
+    reports,
+    path,
+    browser,
+    release,
+    exactOnly,
+    addNewFeatures,
+  };
+};
+
 export const main = async (
   reportPaths: string[],
-  filter: any,
+  filter: MainFilter,
   browsers: Browsers,
   overrides: Overrides,
 ): Promise<void> => {
-  // Replace filter.path with a minimatch object.
-  if (filter.path && filter.path.includes('*')) {
-    filter.path = new Minimatch(filter.path);
-  }
-
-  if (filter.release === 'false') {
-    filter.release = false;
-  }
+  const _filter = processFilter(filter);
 
   const bcdFiles = (await loadJsonFiles(
-    filter.addNewFeatures
+    _filter.addNewFeatures
       ? [path.join(BCD_DIR, '__missing')]
       : CATEGORIES.map((cat) => path.join(BCD_DIR, ...cat.split('.'))),
   )) as { [key: string]: Identifier };
@@ -690,7 +729,7 @@ export const main = async (
   // Should match https://github.com/mdn/browser-compat-data/blob/f10bf2cc7d1b001a390e70b7854cab9435ffb443/test/linter/test-style.js#L63
   // TODO: https://github.com/mdn/browser-compat-data/issues/3617
   for (const [file, data] of Object.entries(bcdFiles)) {
-    const modified = update(data, supportMatrix, filter);
+    const modified = update(data, supportMatrix, _filter);
     if (!modified) {
       continue;
     }
